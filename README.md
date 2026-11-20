@@ -201,7 +201,7 @@ rexume 0.1.26 and rexurrect 0.4.0:
 | Layout and pane IDs | Rex's own, saved about a second after each change | Rex's own | its last snapshot, saved every 15 minutes by default; replaces Rex's copies, with new IDs |
 | Agents | Claude Code, Codex, OpenCode, Pi | Claude Code, Codex, OpenCode, Pi, omp | Claude Code, Codex, and Neovim with a `Session.vim` |
 | Learns the pane from | Rex's hook output in the agents' logs; its own plugins for OpenCode and Pi | its own hooks and plugins, and a daemon following Rex's events | its own hook, which you add to each agent |
-| Runs in the background | nothing; a one-shot helper at server start | a daemon, as a login item | a save job, every 15 minutes by default, as a login item |
+| **Runs in the background** | **nothing; a one-shot helper at server start** | **a daemon, as a login item** | **a save job, every 15 minutes by default, as a login item** |
 | Adds to the agents | an OpenCode plugin and a Pi extension | 4 Claude Code hooks, a Claude Code plugin, a Codex hook, OpenCode, Pi and omp plugins, a skill | one hook each for Claude Code and Codex |
 | Made of | one Lua file in `init.lua`, two small TypeScript plugins | a Rust program | a Rust program |
 | Starts the conversation | yes, unless `press_enter = false` | yes | types the command; `auto_resume` starts it |
