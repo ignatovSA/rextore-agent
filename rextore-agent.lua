@@ -29,7 +29,7 @@ local RG_CANDIDATES = { "/opt/homebrew/bin/rg", "/usr/local/bin/rg", "/usr/bin/r
 
 local config = {
   on_start = true,      -- type the resume commands once after the server starts
-  press_enter = false,  -- also press Enter, so the conversations start by themselves
+  press_enter = true,   -- press Enter after typing; false leaves each command at its prompt
   command = "claude",   -- what starts Claude Code; your shell alias or function applies
   projects_dir = nil,   -- default: $CLAUDE_CONFIG_DIR/projects, else ~/.claude/projects
   state_dir = nil,      -- default: $XDG_STATE_HOME/rextore-agent, else ~/.local/state/...

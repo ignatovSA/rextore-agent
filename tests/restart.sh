@@ -85,27 +85,25 @@ start_server
 r block call -s "$session" -b "$block" process >/dev/null 2>&1 || fail "the pane was not restored under the same ID"
 echo "ok: test server restarted, pane restored under the same ID"
 
-want="cd '$tmp' && echo resumed --resume $id"
+# The command runs by itself: `echo` prints its arguments.
 i=0
-until r capture -s "$session" -b "$block" --trim --unwrap 2>/dev/null | grep -F -e "$want" >/dev/null; do
-  i=$((i + 1)); [ "$i" -gt 60 ] && fail "nothing typed within 60s: $(r capture -s "$session" -b "$block" --trim --unwrap | tail -3)"
+until r capture -s "$session" -b "$block" --trim --unwrap 2>/dev/null | grep -E "^resumed --resume $id\$" >/dev/null; do
+  i=$((i + 1)); [ "$i" -gt 60 ] && fail "nothing ran within 60s: $(r capture -s "$session" -b "$block" --trim --unwrap | tail -3)"
   sleep 1
 done
-echo "ok: the resume command was typed by itself after ${i}s"
+echo "ok: the resume command ran by itself after ${i}s"
 
-r capture -s "$session" -b "$block" --trim --unwrap | grep -E "^resumed --resume $id\$" >/dev/null \
-  && fail "the command ran, but press_enter is off"
 jq -e '.done == true' "$tmp/state/state.json" >/dev/null || fail "state not marked done: $(cat "$tmp/state/state.json")"
 jq -e '.typed | length == 1' "$tmp/state/last-run.json" >/dev/null || fail "last run: $(cat "$tmp/state/last-run.json")"
-echo "ok: typed once, not run, state recorded"
+echo "ok: ran once, state recorded"
 
-# A config reload must not type again.
-r send-key -s "$session" -b "$block" ctrl+u >/dev/null
+# A config reload must not run it again.
+runs() { r capture -s "$session" -b "$block" --trim --unwrap | grep -c -E "^resumed --resume $id\$"; }
+before=$(runs)
 r config reload >/dev/null
 sleep 5
-r capture -s "$session" -b "$block" --trim --unwrap | tail -1 | grep -F -e "--resume" >/dev/null \
-  && fail "a config reload typed the command again"
-echo "ok: a config reload does not type again"
+[ "$(runs)" = "$before" ] || fail "a config reload ran the command again"
+echo "ok: a config reload does not run it again"
 
 # The palette action runs inside the server and covers the session it runs in.
 plan=$(env -u REX_SESSION -u REX_BLOCK "$rexbin" -S "$sock" --autostart=false do -s "$session" rextore dry_run=true --json)

@@ -60,23 +60,24 @@ printf '%s' "$plan" | jq -e --arg b "$block" --arg id "$id" \
   >/dev/null || fail "dry run: $plan"
 echo "ok: dry run finds the pane, ready, with its last activity"
 
-# 2. Without Enter, the command is typed and left at the prompt.
-act >/dev/null
+# 2. With press_enter off, the command is typed and left at the prompt.
+act press_enter=false >/dev/null
 sleep 0.5
 screen | grep -F "cd '$tmp' && echo resumed --resume $id" >/dev/null || fail "typed command not on screen: $(screen | tail -3)"
 screen | grep -E "^resumed --resume $id\$" >/dev/null && fail "the command ran without Enter"
 echo "ok: the command is typed, not run"
 
-# 3. Typing again replaces the line instead of appending to it; Enter runs it.
-act press_enter=true >/dev/null
+# 3. Typing again replaces the line instead of appending to it; by default
+# Enter runs it.
+act >/dev/null
 sleep 1
 screen | grep -E "^resumed --resume $id\$" >/dev/null || fail "Enter did not run it: $(screen | tail -3)"
 screen | grep -F -e "--resume $id cd" >/dev/null && fail "the second typing appended to the first"
-echo "ok: retyping clears the prompt first, and press_enter runs it"
+echo "ok: retyping clears the prompt first, and Enter runs it by default"
 
 # 4. As a script, it covers every session; dry_run types nothing.
 script() { rex do "$here/rextore-agent.lua" --args "$1" --json; }
-opts="{\"projects_dir\":\"$tmp/projects\",\"state_dir\":\"$tmp/state\",\"command\":\"echo resumed\",\"wait\":5,\"rg\":${E2E_RG:-null}}"
+opts="{\"projects_dir\":\"$tmp/projects\",\"state_dir\":\"$tmp/state\",\"command\":\"echo resumed\",\"wait\":5,\"press_enter\":false,\"rg\":${E2E_RG:-null}}"
 all=$(script "{\"all\":true,\"dry_run\":true,\"options\":$opts}")
 printf '%s' "$all" | jq -e --arg b "$block" '.ready | map(.block_id) | index($b) != null' >/dev/null || fail "all sessions: $all"
 echo "ok: the script finds the pane across sessions"

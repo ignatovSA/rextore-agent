@@ -7,10 +7,10 @@ conversations in the panes Rex restores after its server restarts.
 
 Rex brings back your sessions, tabs, and panes after a restart, but each pane
 comes back with a fresh shell. The Claude Code conversations that ran in them
-are gone. After a restart, rextore types
-`cd <folder> && claude --resume <conversation>` into each pane that ran one.
-By default it doesn't press Enter, so you decide which conversations to
-resume.
+are gone. After a restart, rextore runs
+`cd <folder> && claude --resume <conversation>` in each pane that ran one, so
+the conversations come back by themselves. With `press_enter = false` it only
+types the commands, and you press Enter in the panes you want back.
 
 It needs no daemon and installs no hooks. It's one Lua file loaded from Rex's
 `init.lua`.
@@ -62,9 +62,9 @@ Run `sh install.sh --uninstall` to undo both.
 ## Use
 
 **After a restart** nothing is needed. When the Rex server starts, the plugin
-waits up to a minute for the restored shells, then types the resume command
-into each pane that ran a conversation. Press Enter in the panes you want back.
-It runs once per server start. A later `rex config reload` doesn't type again.
+waits up to a minute for the restored shells, then runs the resume command in
+each pane that ran a conversation. It runs once per server start. A later
+`rex config reload` doesn't run it again.
 
 **From the command palette**, run *Resume Claude Conversations*. It does the
 same for the panes of the current session that wait at a prompt. From a shell
@@ -91,7 +91,7 @@ Pass them to `setup`:
 
 ```lua
 require("rextore-agent").setup{
-  press_enter = true,       -- start the conversations instead of only typing
+  press_enter = false,      -- only type the commands; you press Enter
   key = "shift+cmd+r",      -- bind the action to a key
 }
 ```
@@ -99,7 +99,7 @@ require("rextore-agent").setup{
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `on_start` | `true` | Type the resume commands once after the server starts. |
-| `press_enter` | `false` | Also press Enter. |
+| `press_enter` | `true` | Press Enter after typing. `false` leaves each command at its prompt. |
 | `command` | `"claude"` | What starts Claude Code. Your shell's alias or function for it applies. |
 | `wait` | `60` | Seconds the startup run waits for restored shells to reach a prompt. |
 | `projects_dir` | `$CLAUDE_CONFIG_DIR/projects` or `~/.claude/projects` | Where the transcripts are. |
@@ -126,8 +126,8 @@ Once Rex runs `rex.on` handlers from `init.lua`, the helper can go away.
   agent hook was installed carry a pane ID. The same goes for a conversation
   from before the hook that you resumed but haven't used since.
 - **It can't tell whether you'd quit Claude Code** in a pane before the
-  restart. It offers the pane's most recent conversation either way, which is
-  why it doesn't press Enter by default.
+  restart. The pane's most recent conversation comes back either way. Set
+  `press_enter = false` if you'd rather choose.
 - **A reply cut off by the restart doesn't continue by itself.** Ask it to
   continue.
 - **Typing races with you.** If you type into a restored pane at the same
