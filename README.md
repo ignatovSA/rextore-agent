@@ -92,6 +92,34 @@ server stop, isn't a quit. Both plugins use only Node's standard library.
 - **Pi:** each session an interactive Pi starts or switches to. `pi -p` and
   other non-interactive runs aren't recorded.
 
+## Compared with rexume and rexurrect
+
+Two other projects bring agent conversations back after a Rex restart.
+[rexume](https://github.com/Entwining/rexume) builds on Rex's own restore, as
+rextore does. [rexurrect](https://github.com/cemcatik/rexurrect) is
+tmux-resurrect for Rex: it saves and restores whole sessions itself. As of
+rexume 0.1.26 and rexurrect 0.4.0:
+
+| | rextore-agent | rexume | rexurrect |
+| --- | --- | --- | --- |
+| Restores | the conversation in each pane Rex restores | the conversation in each pane Rex restores | whole sessions from its own snapshots: layout, folders, earlier output, last commands |
+| Layout and pane IDs | Rex's own, saved about a second after each change | Rex's own | its last snapshot, saved every 15 minutes by default; replaces Rex's copies, with new IDs |
+| Agents | Claude Code, Codex, OpenCode, Pi | Claude Code, Codex, OpenCode, Pi, omp | Claude Code, Codex, and Neovim with a `Session.vim` |
+| Learns the pane from | Rex's hook output in the agents' logs; its own plugins for OpenCode and Pi | its own hooks and plugins, and a daemon following Rex's events | its own hook, which you add to each agent |
+| Runs in the background | nothing; a one-shot helper at server start | a daemon, as a login item | a save job, every 15 minutes by default, as a login item |
+| Adds to the agents | an OpenCode plugin and a Pi extension | 4 Claude Code hooks, a Claude Code plugin, a Codex hook, OpenCode, Pi and omp plugins, a skill | one hook each for Claude Code and Codex |
+| Made of | one Lua file in `init.lua`, two small TypeScript plugins | a Rust program | a Rust program |
+| Starts the conversation | yes, unless `press_enter = false` | yes | types the command; `auto_resume` starts it |
+| Continues a reply the restart cut off | no | yes, once | no |
+| Keeps model, effort, permission mode | as far as each agent's resume does | yes, and Claude Code's launch flags and provider | as far as each agent's resume does; Claude Code's flags are dropped |
+| Leaves a conversation you quit closed | OpenCode and Pi only | yes; it watches each pane live | if quit before its last save, or any time with its zsh recorder |
+| Brings back earlier output | no | no | yes |
+| Also | | hands workers' results back to an orchestrator agent | restores Neovim sessions and any program you define |
+
+Pick rexume for the most complete agent recovery, and rexurrect if you want
+scrollback and Neovim back too. Pick rextore if you want the smallest
+footprint: no daemon and no binary, with Rex's own restore doing the rest.
+
 ## Install
 
 ```sh
