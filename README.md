@@ -116,56 +116,6 @@ open pane was created, which can still take several seconds.
 | OpenCode | rextore's OpenCode plugin, in `~/.local/state/rextore-agent/panes.jsonl` | `opencode --session <id>` |
 | Pi | rextore's Pi extension, in the same `panes.jsonl` | `pi --session <file>` |
 
-These are the four agents `rex skill setup` knows. Claude Code and Codex need
-Rex's agent hook, which `rex skill setup` installs; run `rex skill status` to
-check it. Rex has no hook for OpenCode and Pi, so `install.sh` adds rextore's
-own plugin to each instead. See [OpenCode and Pi](#opencode-and-pi).
-
-### Codex
-
-Only Codex sessions that ran Rex's hook in their own pane count. The hook
-reports the `REX_BLOCK` of the process that runs it, and that process differs
-by session:
-
-- **The Codex TUI running a session itself** (`"source": "cli"` in the log's
-  first line): the hook runs in the pane, so the pane ID is right.
-- **The TUI running it through Codex's shared app-server daemon**
-  (`"source": "vscode"`): the hook runs in the daemon, which reports the pane
-  the daemon was started from, so every such session names that one pane.
-  rextore skips these.
-- **`codex exec` runs and subagents** carry the pane of whatever started them.
-  rextore skips these too.
-
-### OpenCode and Pi
-
-Rex's hook can't run in OpenCode or Pi, so Rex can't tell them which pane they
-run in. rextore's own plugins do it from inside the agent:
-[`agents/opencode/tui.ts`](agents/opencode/tui.ts), an OpenCode TUI plugin, and
-[`agents/pi/rextore-agent.ts`](agents/pi/rextore-agent.ts), a Pi extension.
-When an agent in a Rex pane shows or starts a session, the plugin appends a
-line to `$XDG_STATE_HOME/rextore-agent/panes.jsonl`
-(`~/.local/state/rextore-agent/panes.jsonl` by default):
-
-```json
-{"agent":"opencode","event":"shown","block":"block:…","id":"ses_…","cwd":"…","timestamp":"…"}
-{"agent":"pi","event":"shown","block":"block:…","id":"…","file":"…/session.jsonl","cwd":"…","timestamp":"…"}
-```
-
-When you quit the agent, the plugin adds an `"event":"quit"` line, so rextore
-doesn't reopen a session you closed. A signal, as at a shutdown or a Rex
-server stop, isn't a quit. Both plugins use only Node's standard library.
-
-- **OpenCode:** the session the TUI shows, checked once a second. A
-  subagent's session counts as its parent's.
-- **Pi:** each session an interactive Pi starts or switches to. `pi -p` and
-  other non-interactive runs aren't recorded.
-
-`install.sh` links each plugin for the agents it finds: OpenCode's as
-`plugins/rextore-agent/tui.ts` in its config folder (`$OPENCODE_CONFIG_DIR`, or
-`~/.config/opencode`), and Pi's as `extensions/rextore-agent.ts` in its agent
-folder (`$PI_CODING_AGENT_DIR`, or `~/.pi/agent`). Restart a running OpenCode
-or Pi to load its plugin.
-
 ## Compared with rexume and rexurrect
 
 Two other projects bring agent conversations back after a Rex restart.
@@ -268,7 +218,7 @@ Once Rex runs `rex.on` handlers from `init.lua`, the helper can go away.
   agent hook was installed carry a pane ID. The same goes for a conversation
   from before the hook that you resumed but haven't used since.
 - **Codex sessions run through Codex's app-server daemon aren't covered**,
-  because their logs name the daemon's pane. See [Codex](#codex).
+  because their logs name the daemon's pane.
 - **OpenCode and Pi sessions from before their plugin was installed aren't
   covered.** The plugins have been tested only against mocked plugin APIs, not
   a real OpenCode or Pi.
