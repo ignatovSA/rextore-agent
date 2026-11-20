@@ -44,8 +44,8 @@ printf '%s\n' \
 cat > "$tmp/dev.lua" <<EOF
 dofile("$here/rextore-agent.lua").setup{
   on_start = false,
-  dirs = { claude = "$tmp/projects", codex = "$tmp/codex" },
-  commands = { claude = "echo resumed", codex = "echo codex-resumed" },
+  dirs = { claude = "$tmp/projects", codex = "$tmp/codex", opencode = "$tmp/panes" },
+  commands = { claude = "echo resumed", codex = "echo codex-resumed", opencode = "echo oc-resumed" },
   state_dir = "$tmp/state",
   rg = ${E2E_RG:-nil},
 }
@@ -112,5 +112,25 @@ act >/dev/null
 sleep 1
 screen | grep -E "^codex-resumed resume $cid\$" >/dev/null || fail "codex resume did not run: $(screen | tail -3)"
 echo "ok: a newer Codex session wins, and runs as codex resume"
+
+# 7. OpenCode: what rextore's plugin recorded in panes.jsonl. A session shown
+# later wins; once quit, it doesn't come back, and the pane falls back to its
+# previous conversation.
+mkdir -p "$tmp/panes"
+pane_line() { # agent event id time
+  printf '{"agent":"%s","event":"%s","block":"%s","id":"%s","cwd":"%s","timestamp":"%s"}\n' "$1" "$2" "$block" "$3" "$tmp" "$4" >> "$tmp/panes/panes.jsonl"
+}
+pane_line opencode shown ses_e2e 2026-01-01T00:30:00.000Z
+plan=$(act dry_run=true)
+printf '%s' "$plan" | jq -e --arg b "$block" '.ready | map(select(.block_id == $b)) | .[0].agent == "opencode" and .[0].conversation == "ses_e2e"' \
+  >/dev/null || fail "opencode dry run: $plan"
+act >/dev/null
+sleep 1
+screen | grep -E "^oc-resumed --session ses_e2e\$" >/dev/null || fail "opencode resume did not run: $(screen | tail -3)"
+pane_line opencode quit ses_e2e 2026-01-01T00:31:00.000Z
+plan=$(act dry_run=true)
+printf '%s' "$plan" | jq -e --arg b "$block" '.ready | map(select(.block_id == $b)) | .[0].agent == "codex"' \
+  >/dev/null || fail "after an OpenCode quit: $plan"
+echo "ok: an OpenCode session from the plugin's record wins, and a quit one doesn't come back"
 
 echo "all end-to-end checks passed"

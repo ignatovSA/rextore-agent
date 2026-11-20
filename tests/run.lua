@@ -108,6 +108,33 @@ do
   eq("codex cwd", recs[1] and recs[1].cwd, "/w")
 end
 
+-- panes.jsonl, which rextore's own agent plugins write
+do
+  local function pane_line(t) return s(t) end
+  local text = table.concat({
+    pane_line({ agent = "opencode", event = "shown", block = B1, id = "ses_abc", cwd = "/w", timestamp = "2026-11-20T10:00:00.000Z" }),
+    pane_line({ agent = "opencode", event = "quit", block = B1, id = "ses_abc", cwd = "/w", timestamp = "2026-11-20T11:00:00.000Z" }),
+    pane_line({ agent = "pi", event = "shown", block = B2, id = "p1", timestamp = "2026-11-20T10:00:00.000Z" }),
+    pane_line({ agent = "opencode", event = "shown", block = "not a block", id = "ses_x" }),
+    pane_line({ agent = "opencode", event = "shown", block = B2, id = "bad id; rm -rf ~" }),
+    "{not json",
+  }, "\n")
+  local recs = I.parse_panes("opencode", text)
+  eq("panes count", #recs, 2)
+  eq("panes id with underscore", recs[1] and recs[1].id, "ses_abc")
+  eq("panes shown", recs[1] and recs[1].ended, false)
+  eq("panes quit", recs[2] and recs[2].ended, true)
+  eq("panes other agent", #I.parse_panes("pi", text), 1)
+
+  -- a session quit on purpose isn't reopened; shown again later, it is
+  local by = I.plan(recs, { [B1] = true }, function() return nil end)
+  eq("plan skips a quit session", by[B1], nil)
+  recs[#recs + 1] = { agent = "opencode", id = "ses_abc", block = B1, cwd = "/w", ts = "2026-11-20T12:00:00.000Z", ended = false }
+  by = I.plan(recs, { [B1] = true }, function() return nil end)
+  eq("plan reopens a session shown after its quit", by[B1] and by[B1].id, "ses_abc")
+  eq("opencode command", I.command_line(by[B1], "opencode"), " cd '/w' && opencode --session ses_abc")
+end
+
 -- plan
 do
   local function rec(id, block, ts, agent) return { id = id, block = block, ts = ts, path = id, agent = agent or "claude" } end

@@ -120,6 +120,9 @@ end
 -- Rex's hook output, how to read one such line, and how to resume. Inside a
 -- JSON string, such as a tool's output that merely mentions the hook text,
 -- the quotes are escaped, so a marker matches only the hook's own line.
+--
+-- Rex has no hook for some agents. For those, rextore's own plugin records
+-- the session each pane shows in panes.jsonl, and `panes = true` reads that.
 local AGENTS = {
   claude = {
     command = "claude",
@@ -160,8 +163,19 @@ local AGENTS = {
     end,
     resume = function(c) return { "resume", c.id } end,
   },
+  opencode = {
+    command = "opencode",
+    panes = true, -- from agents/opencode/tui.ts
+    resume = function(c) return { "--session", c.id } end,
+  },
 }
-local AGENT_ORDER = { "claude", "codex" }
+local AGENT_ORDER = { "claude", "codex", "opencode" }
+
+-- Where rextore's agent plugins record panes. They read no options, so this
+-- is always the default state folder.
+local function panes_dir()
+  return env_dir("XDG_STATE_HOME", "/.local/state") .. "/rextore-agent"
+end
 
 local function command_of(agent)
   return config.commands[agent] or AGENTS[agent].command
@@ -198,7 +212,7 @@ local function parse_records(agent, output, meta)
       local path, json = line:sub(1, cut + 5), line:sub(cut + 7)
       local ok, obj = pcall(rex.json.decode, json)
       local r = ok and type(obj) == "table" and read(path, obj, cached) or nil
-      if r and r.block and type(r.id) == "string" and r.id:match("^[%w%-]+$") then
+      if r and r.block and type(r.id) == "string" and r.id:match("^[%w_%-]+$") then
         r.agent, r.path, r.ts = agent, path, r.ts or ""
         records[#records + 1] = r
       end
@@ -207,9 +221,30 @@ local function parse_records(agent, output, meta)
   return records
 end
 
+-- The lines rextore's plugins write to panes.jsonl, for one agent. "shown"
+-- means a pane shows the session; "quit" means it was closed on purpose, not
+-- ended by a signal, so it isn't reopened.
+local function parse_panes(agent, text)
+  local records = {}
+  for line in each_line(tostring(text)) do
+    local ok, obj = pcall(rex.json.decode, line)
+    if ok and type(obj) == "table" and obj.agent == agent
+        and type(obj.id) == "string" and obj.id:match("^[%w_%-]+$")
+        and type(obj.block) == "string" and obj.block:match("^block:[%x%-]+$") then
+      records[#records + 1] = {
+        agent = agent, id = obj.id, block = obj.block, cwd = str(obj.cwd),
+        ts = str(obj.timestamp) or "", file = str(obj.file), path = str(obj.file),
+        ended = obj.event == "quit",
+      }
+    end
+  end
+  return records
+end
+
 -- The conversation each live pane ran last. A conversation belongs to the
--- pane its latest record names (it moves when resumed elsewhere); a pane
--- that ran several gets the one active most recently.
+-- pane its latest record names (it moves when resumed elsewhere), unless that
+-- record says it was quit; a pane that ran several gets the one active most
+-- recently.
 local function plan(records, live, activity)
   local latest = {}
   for _, r in ipairs(records) do
@@ -219,7 +254,7 @@ local function plan(records, live, activity)
   end
   local by_block = {}
   for _, r in pairs(latest) do
-    if live[r.block] then
+    if live[r.block] and not r.ended then
       r.active = activity(r.path, r.ts) or r.ts
       local cur = by_block[r.block]
       if not cur or r.active > cur.active then by_block[r.block] = r end
@@ -333,8 +368,11 @@ end
 local function all_records(since)
   local records = {}
   for _, agent in ipairs(AGENT_ORDER) do
-    if config.agents[agent] ~= false then
-      local def = AGENTS[agent]
+    local def = AGENTS[agent]
+    if config.agents[agent] ~= false and def.panes then
+      local text = read_file((config.dirs[agent] or panes_dir()) .. "/panes.jsonl")
+      for _, r in ipairs(parse_panes(agent, text or "")) do records[#records + 1] = r end
+    elseif config.agents[agent] ~= false then
       local out, err = search(config.dirs[agent] or def.dir(), def.marker, since)
       if out then
         for _, r in ipairs(parse_records(agent, out)) do records[#records + 1] = r end
@@ -580,7 +618,7 @@ function M.setup(opts)
     title = "Resume Agent Conversations",
     description = "Resume the agent conversation each pane of this session ran, "
       .. "in the panes waiting at a prompt.",
-    keywords = "rextore claude codex resume restore agent conversation",
+    keywords = "rextore claude codex opencode resume restore agent conversation",
     args = { dry_run = "boolean?", press_enter = "boolean?" },
     run = run,
   }
@@ -608,6 +646,7 @@ M._internal = {
   shword = shword,
   uuid7_seconds = uuid7_seconds,
   parse_records = parse_records,
+  parse_panes = parse_panes,
   plan = plan,
   command_line = command_line,
   keystrokes = keystrokes,
