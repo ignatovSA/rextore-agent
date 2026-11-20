@@ -2,44 +2,67 @@
 
 Rex restores your panes. rextore brings back the agent conversations in them.
 
-A [Rex](https://www.superlogical.com/rex) plugin that reopens Claude Code
+A [Rex](https://www.superlogical.com/rex) plugin that reopens agent
 conversations in the panes Rex restores after its server restarts.
 
 Rex brings back your sessions, tabs, and panes after a restart, but each pane
-comes back with a fresh shell. The Claude Code conversations that ran in them
-are gone. After a restart, rextore runs
-`cd <folder> && claude --resume <conversation>` in each pane that ran one, so
-the conversations come back by themselves. With `press_enter = false` it only
+comes back with a fresh shell. The agent conversations that ran in them are
+gone. After a restart, rextore runs the agent's resume command in each pane
+that ran one, such as `cd <folder> && claude --resume <conversation>`, so the
+conversations come back by themselves. With `press_enter = false` it only
 types the commands, and you press Enter in the panes you want back.
 
 It needs no daemon and installs no hooks. It's one Lua file loaded from Rex's
 `init.lua`.
 
+## Agents
+
+| Agent | Where rextore finds the pane | Resume command |
+| --- | --- | --- |
+| Claude Code | Rex's hook output in the transcripts under `~/.claude/projects` | `claude --resume <id>` |
+| Codex | Rex's hook output in the session logs under `~/.codex/sessions` | `codex resume <id>` |
+
+Both need Rex's agent hook, which `rex skill setup` installs. Run
+`rex skill status` to check it.
+
 ## How it works
 
-Rex's agent hook (`rex __internal session-start --agent claude`, which
-`rex skill setup` installs) prints the pane's ID, `REX_BLOCK=block:…`, into
-every Claude Code conversation started in a Rex pane. Claude Code saves that
-output in the conversation's transcript under `~/.claude/projects`. Rex
-restores panes under the IDs they had, so the transcripts are enough to work
-out which conversation each restored pane ran:
+Rex's agent hook (`rex __internal session-start --agent …`) tells each
+session it starts which Rex pane it runs in, `REX_BLOCK=block:…`, and the
+agent keeps that text in the session's log. Rex restores panes under the IDs
+they had, so the logs are enough to work out which conversation each restored
+pane ran:
 
 - A conversation belongs to the pane named in its latest Rex hook entry. If
   you resumed it in another pane, it moves there.
-- A pane that ran several conversations gets the one active most recently,
-  judged by the last entry in each transcript.
-- Rex's hook text has to be the start of a `SessionStart` hook entry. A
-  transcript that merely mentions a pane ID, such as a tool's output, doesn't
-  count.
+- A pane that ran several conversations, from any agent, gets the one active
+  most recently, judged by the last entry in each log.
+- Rex's hook text has to be the start of the hook's own entry. A log that
+  merely mentions a pane ID, such as in a tool's output, doesn't count.
 
 Only panes waiting at a fresh shell prompt get typed into. The plugin clears
 the prompt with Ctrl-E and Ctrl-U first. It skips panes where something else
-is running, such as Claude Code itself.
+is running, such as the agent itself.
 
 The search uses [ripgrep](https://github.com/BurntSushi/ripgrep) when it's
-installed: under a second for gigabytes of transcripts. Without it, the plugin
-falls back to `find` and `grep`. It then reads only transcripts changed since
-the oldest open pane was created, which can still take several seconds.
+installed: under a second for gigabytes of logs. Without it, the plugin falls
+back to `find` and `grep`. It then reads only logs changed since the oldest
+open pane was created, which can still take several seconds.
+
+### Codex
+
+Only Codex sessions that ran Rex's hook in their own pane count. The hook
+reports the `REX_BLOCK` of the process that runs it, and that process differs
+by session:
+
+- **The Codex TUI running a session itself** (`"source": "cli"` in the log's
+  first line): the hook runs in the pane, so the pane ID is right.
+- **The TUI running it through Codex's shared app-server daemon**
+  (`"source": "vscode"`): the hook runs in the daemon, which reports the pane
+  the daemon was started from, so every such session names that one pane.
+  rextore skips these.
+- **`codex exec` runs and subagents** carry the pane of whatever started them.
+  rextore skips these too.
 
 ## Install
 
@@ -66,7 +89,7 @@ waits up to a minute for the restored shells, then runs the resume command in
 each pane that ran a conversation. It runs once per server start. A later
 `rex config reload` doesn't run it again.
 
-**From the command palette**, run *Resume Claude Conversations*. It does the
+**From the command palette**, run *Resume Agent Conversations*. It does the
 same for the panes of the current session that wait at a prompt. From a shell
 in a Rex pane:
 
@@ -91,18 +114,21 @@ Pass them to `setup`:
 
 ```lua
 require("rextore-agent").setup{
-  press_enter = false,      -- only type the commands; you press Enter
-  key = "shift+cmd+r",      -- bind the action to a key
+  press_enter = false,                      -- only type the commands; you press Enter
+  agents = { codex = false },               -- leave an agent out
+  commands = { claude = "claude --model opus" },
+  key = "shift+cmd+r",                      -- bind the action to a key
 }
 ```
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `on_start` | `true` | Type the resume commands once after the server starts. |
+| `on_start` | `true` | Run the resume commands once after the server starts. |
 | `press_enter` | `true` | Press Enter after typing. `false` leaves each command at its prompt. |
-| `command` | `"claude"` | What starts Claude Code. Your shell's alias or function for it applies. |
+| `agents` | all on | `false` for an agent leaves it out, such as `{ codex = false }`. |
+| `commands` | `claude`, `codex` | What starts each agent. Your shell's alias or function for it applies. |
+| `dirs` | `$CLAUDE_CONFIG_DIR/projects` or `~/.claude/projects`; `$CODEX_HOME/sessions` or `~/.codex/sessions` | Where each agent's logs are, such as `{ claude = "/elsewhere/projects" }`. |
 | `wait` | `60` | Seconds the startup run waits for restored shells to reach a prompt. |
-| `projects_dir` | `$CLAUDE_CONFIG_DIR/projects` or `~/.claude/projects` | Where the transcripts are. |
 | `state_dir` | `$XDG_STATE_HOME/rextore-agent` or `~/.local/state/rextore-agent` | Where it records the last startup run (`last-run.json`). |
 | `rg` | first of `/opt/homebrew/bin/rg`, `/usr/local/bin/rg`, `/usr/bin/rg` | Path to ripgrep; `false` never uses it. |
 | `rex` | the server's own binary | The `rex` CLI the startup helper runs. |
@@ -125,17 +151,18 @@ Once Rex runs `rex.on` handlers from `init.lua`, the helper can go away.
 - **Old conversations aren't covered.** Only conversations started after Rex's
   agent hook was installed carry a pane ID. The same goes for a conversation
   from before the hook that you resumed but haven't used since.
-- **It can't tell whether you'd quit Claude Code** in a pane before the
-  restart. The pane's most recent conversation comes back either way. Set
+- **Codex sessions run through Codex's app-server daemon aren't covered**,
+  because their logs name the daemon's pane. See [Codex](#codex).
+- **It can't tell whether you'd quit the agent** in a pane before the restart.
+  The pane's most recent conversation comes back either way. Set
   `press_enter = false` if you'd rather choose.
 - **A reply cut off by the restart doesn't continue by itself.** Ask it to
   continue.
 - **Typing races with you.** If you type into a restored pane at the same
   moment, the line can get mixed. In a shell with a vi keymap, Ctrl-U clears
   only what's before the cursor.
-- **Model, effort, and permission mode** come back only as far as Claude
-  Code's own `--resume` brings them back.
-- **Only Claude Code is covered**, not Codex or other agents.
+- **Model, effort, and permission mode** come back only as far as each agent's
+  own resume brings them back.
 - **Tested on macOS** with Rex 0.1.0-preview.14. The Linux path (finding the
   `rex` binary through `/proc`) is untested.
 
@@ -145,12 +172,12 @@ From a Rex pane, in the repository:
 
 ```sh
 rex do tests/run.lua    # unit tests, in Rex's own Lua
-sh tests/e2e.sh         # opens a scratch tab, uses echo in place of claude
+sh tests/e2e.sh         # opens a scratch tab, uses echo in place of the agents
 sh tests/restart.sh     # a throwaway Rex server: start, stop, restore, check
 ```
 
-None of them touch your real transcripts or panes. `restart.sh` runs its own
-Rex server on a separate socket and state folder. `E2E_RG=false sh tests/e2e.sh`
+None of them touch your real logs or panes. `restart.sh` runs its own Rex
+server on a separate socket and state folder. `E2E_RG=false sh tests/e2e.sh`
 tests the fallback without ripgrep.
 
 ## License

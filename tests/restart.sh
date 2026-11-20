@@ -31,9 +31,9 @@ mkdir -p "$tmp/config" "$tmp/projects/-scratch"
 ln -s "$here/rextore-agent.lua" "$tmp/config/rextore-agent.lua"
 cat > "$tmp/config/init.lua" <<EOF
 require("rextore-agent").setup{
-  projects_dir = "$tmp/projects",
+  dirs = { claude = "$tmp/projects", codex = "$tmp/codex" },
+  commands = { claude = "echo resumed" },
   state_dir = "$tmp/state",
-  command = "echo resumed",
 }
 EOF
 

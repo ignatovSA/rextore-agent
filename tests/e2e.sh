@@ -44,9 +44,9 @@ printf '%s\n' \
 cat > "$tmp/dev.lua" <<EOF
 dofile("$here/rextore-agent.lua").setup{
   on_start = false,
-  projects_dir = "$tmp/projects",
+  dirs = { claude = "$tmp/projects", codex = "$tmp/codex" },
+  commands = { claude = "echo resumed", codex = "echo codex-resumed" },
   state_dir = "$tmp/state",
-  command = "echo resumed",
   rg = ${E2E_RG:-nil},
 }
 EOF
@@ -77,7 +77,7 @@ echo "ok: retyping clears the prompt first, and Enter runs it by default"
 
 # 4. As a script, it covers every session; dry_run types nothing.
 script() { rex do "$here/rextore-agent.lua" --args "$1" --json; }
-opts="{\"projects_dir\":\"$tmp/projects\",\"state_dir\":\"$tmp/state\",\"command\":\"echo resumed\",\"wait\":5,\"press_enter\":false,\"rg\":${E2E_RG:-null}}"
+opts="{\"dirs\":{\"claude\":\"$tmp/projects\",\"codex\":\"$tmp/codex\"},\"commands\":{\"claude\":\"echo resumed\",\"codex\":\"echo codex-resumed\"},\"state_dir\":\"$tmp/state\",\"wait\":5,\"press_enter\":false,\"rg\":${E2E_RG:-null}}"
 all=$(script "{\"all\":true,\"dry_run\":true,\"options\":$opts}")
 printf '%s' "$all" | jq -e --arg b "$block" '.ready | map(.block_id) | index($b) != null' >/dev/null || fail "all sessions: $all"
 echo "ok: the script finds the pane across sessions"
@@ -90,5 +90,27 @@ screen | tail -1 | grep -F "echo resumed --resume $id" >/dev/null || fail "start
 second=$(script "{\"startup\":true,\"options\":$opts}")
 printf '%s' "$second" | jq -e '.note == "already handled for this server"' >/dev/null || fail "second startup run: $second"
 echo "ok: the startup run types once per server instance"
+
+# 6. Codex: a newer session in the same pane wins, if it ran Rex's hook in the
+# pane itself. A session run through Codex's app-server daemon ("vscode")
+# carries the daemon's pane and doesn't count, however new.
+codex_log() { # file id source time
+  mkdir -p "$(dirname "$1")"
+  printf '%s\n' \
+    "{\"timestamp\":\"$4\",\"type\":\"session_meta\",\"payload\":{\"id\":\"$2\",\"cwd\":\"$tmp\",\"originator\":\"codex-tui\",\"source\":\"$3\"}}" \
+    "{\"timestamp\":\"$4\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"developer\",\"content\":[{\"type\":\"input_text\",\"text\":$content}]}}" \
+    > "$1"
+}
+cid=$(uuidgen | tr 'A-Z' 'a-z')
+codex_log "$tmp/codex/2026/01/01/rollout-a-$cid.jsonl" "$cid" cli 2026-01-01T00:10:00.000Z
+codex_log "$tmp/codex/2026/01/01/rollout-b.jsonl" "$(uuidgen | tr 'A-Z' 'a-z')" vscode 2026-01-01T00:20:00.000Z
+plan=$(act dry_run=true)
+printf '%s' "$plan" | jq -e --arg b "$block" --arg id "$cid" \
+  '.ready | map(select(.block_id == $b)) | .[0].agent == "codex" and .[0].conversation == $id' \
+  >/dev/null || fail "codex dry run: $plan"
+act >/dev/null
+sleep 1
+screen | grep -E "^codex-resumed resume $cid\$" >/dev/null || fail "codex resume did not run: $(screen | tail -3)"
+echo "ok: a newer Codex session wins, and runs as codex resume"
 
 echo "all end-to-end checks passed"

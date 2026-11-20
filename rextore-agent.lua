@@ -1,11 +1,11 @@
--- rextore-agent.lua: reopen Claude Code conversations in the panes Rex
--- restores after its server restarts.
+-- rextore-agent.lua: reopen agent conversations in the panes Rex restores
+-- after its server restarts.
 --
--- Rex's agent hook (`rex __internal session-start --agent claude`) prints
--- REX_BLOCK=<pane id> into every Claude Code conversation it starts, and
--- Claude Code keeps that output in the conversation's transcript. Rex brings
--- panes back under the same IDs, so the transcripts alone say which
--- conversation each restored pane ran. No daemon, no extra hooks.
+-- Rex's agent hook (`rex __internal session-start --agent ...`) tells each
+-- Claude Code and Codex session which pane it runs in, REX_BLOCK=<pane id>,
+-- and both agents keep that text in the session's log. Rex brings panes back
+-- under the same IDs, so the logs alone say which conversation each restored
+-- pane ran. No daemon, no extra hooks.
 --
 -- Load it from ~/.config/rex/init.lua:
 --
@@ -20,18 +20,15 @@
 local M = {}
 
 local TERMINAL = "com.superlogical.terminal"
-local CONTENT_PREFIX = "You're running in a Rex terminal."
--- The raw transcript line of Rex's SessionStart hook output. Inside a JSON
--- string (a tool's output that merely mentions it) the quotes are escaped, so
--- this fixed string only matches the hook record itself.
-local MARKER = '"hookEvent":"SessionStart","content":"' .. CONTENT_PREFIX
+local PREFIX = "You're running in a Rex terminal."
 local RG_CANDIDATES = { "/opt/homebrew/bin/rg", "/usr/local/bin/rg", "/usr/bin/rg" }
 
 local config = {
-  on_start = true,      -- type the resume commands once after the server starts
+  on_start = true,      -- run the resume commands once after the server starts
   press_enter = true,   -- press Enter after typing; false leaves each command at its prompt
-  command = "claude",   -- what starts Claude Code; your shell alias or function applies
-  projects_dir = nil,   -- default: $CLAUDE_CONFIG_DIR/projects, else ~/.claude/projects
+  agents = {},          -- false turns an agent off, such as { codex = false }
+  commands = {},        -- what starts an agent, such as { claude = "claude --model opus" }
+  dirs = {},            -- where an agent's logs are, if not in the default place
   state_dir = nil,      -- default: $XDG_STATE_HOME/rextore-agent, else ~/.local/state/...
   rg = nil,             -- path to ripgrep; default: the first one found; false: never
   rex = nil,            -- rex CLI for the startup helper; default: the server's own binary
@@ -39,15 +36,35 @@ local config = {
   path = nil,           -- this file, for the startup helper; default: found via package.path
   wait = 60,            -- seconds the startup run waits for restored shells
 }
+-- What setup() hands on to the startup run, which reads no init.lua.
 local OPTION_NAMES = {
-  "press_enter", "command", "projects_dir", "state_dir", "rg", "wait",
+  "press_enter", "agents", "commands", "dirs", "state_dir", "rg", "wait",
 }
+
+-- Merges options into config; table options merge key by key.
+local function configure(opts)
+  for k, v in pairs(opts or {}) do
+    if type(v) == "table" and type(config[k]) == "table" then
+      for k2, v2 in pairs(v) do config[k][k2] = v2 end
+    else
+      config[k] = v
+    end
+  end
+end
 
 -- Pure helpers ---------------------------------------------------------------
 
 local function shquote(s)
   return "'" .. (s:gsub("'", [['\'']])) .. "'"
 end
+
+-- A shell word: as it is when it holds nothing a shell reads specially.
+local function shword(s)
+  if s:match("^[%w%-%./_:=@+]+$") then return s end
+  return shquote(s)
+end
+
+local function str(v) return type(v) == "string" and v or nil end
 
 -- Seconds since the epoch encoded in a UUIDv7, such as a Rex block ID.
 local function uuid7_seconds(id)
@@ -56,27 +73,134 @@ local function uuid7_seconds(id)
   return tonumber(a .. b, 16) / 1000
 end
 
--- Turns search output ("path:line" per match) into hook records.
-local function parse_records(output)
+-- Rex's Lua refuses patterns over very long strings, and agents' log lines
+-- can be megabytes, so long text is only ever searched with plain finds.
+
+-- Each line of text, without its newline.
+local function each_line(text)
+  local pos = 1
+  return function()
+    if pos > #text then return nil end
+    local nl = text:find("\n", pos, true) or (#text + 1)
+    local line = text:sub(pos, nl - 1)
+    pos = nl + 1
+    return line
+  end
+end
+
+-- The pane ID in Rex's hook text, which starts with PREFIX.
+local function rex_block(text)
+  if type(text) ~= "string" or text:sub(1, #PREFIX) ~= PREFIX then return nil end
+  local at = text:find("REX_BLOCK=block:", 1, true)
+  return at and text:sub(at + 10, at + 60):match("^block:[%x%-]+")
+end
+
+local function home() return os.getenv("HOME") or "" end
+
+local function env_dir(var, fallback)
+  local v = os.getenv(var)
+  if v and v ~= "" then return v end
+  return home() .. fallback
+end
+
+-- Whether a Codex session's pane ID is its own. Rex's hook reports the
+-- REX_BLOCK of the process that runs it. A session the Codex TUI runs itself
+-- (source "cli") runs it in its pane. One it runs through Codex's shared
+-- app-server daemon (source "vscode") runs it in the daemon, which reports the
+-- pane the daemon was started from. `codex exec` runs and subagents carry the
+-- pane of whatever started them.
+local function codex_own_pane(meta)
+  return meta.source == "cli" and meta.originator ~= "codex_exec"
+    and type(meta.agent_path) ~= "string"
+end
+
+-- Agents ---------------------------------------------------------------------
+
+-- For each agent: where its logs are, the raw text of the lines that hold
+-- Rex's hook output, how to read one such line, and how to resume. Inside a
+-- JSON string, such as a tool's output that merely mentions the hook text,
+-- the quotes are escaped, so a marker matches only the hook's own line.
+local AGENTS = {
+  claude = {
+    command = "claude",
+    dir = function() return env_dir("CLAUDE_CONFIG_DIR", "/.claude") .. "/projects" end,
+    marker = '"hookEvent":"SessionStart","content":"' .. PREFIX,
+    -- One transcript per conversation, named after it.
+    record = function(path, obj)
+      local att = obj.attachment
+      if obj.type ~= "attachment" or type(att) ~= "table" or att.hookEvent ~= "SessionStart" then
+        return nil
+      end
+      local block = rex_block(att.content)
+      if not block then return nil end
+      return { id = path:match("([^/]+)%.jsonl$"), block = block, cwd = str(obj.cwd), ts = str(obj.timestamp) }
+    end,
+    resume = function(c) return { "--resume", c.id } end,
+  },
+  codex = {
+    command = "codex",
+    dir = function() return env_dir("CODEX_HOME", "/.codex") .. "/sessions" end,
+    marker = '"type":"input_text","text":"' .. PREFIX,
+    -- Rex's hook output is a developer message. The session's ID, folder and
+    -- kind are in the session_meta on the log's first line.
+    record = function(path, obj, meta)
+      local p = obj.payload
+      if obj.type ~= "response_item" or type(p) ~= "table" or p.type ~= "message"
+          or p.role ~= "developer" or type(p.content) ~= "table" then
+        return nil
+      end
+      local block
+      for _, c in ipairs(p.content) do
+        block = block or (type(c) == "table" and rex_block(c.text)) or nil
+      end
+      if not block then return nil end
+      local m = meta(path)
+      if not m or not codex_own_pane(m) then return nil end
+      return { id = str(m.id), block = block, cwd = str(m.cwd), ts = str(obj.timestamp) }
+    end,
+    resume = function(c) return { "resume", c.id } end,
+  },
+}
+local AGENT_ORDER = { "claude", "codex" }
+
+local function command_of(agent)
+  return config.commands[agent] or AGENTS[agent].command
+end
+
+-- Records -------------------------------------------------------------------
+
+local function first_line_json(path)
+  local f = io.open(path, "r")
+  if not f then return nil end
+  local line = f:read("*l")
+  f:close()
+  local ok, obj = pcall(rex.json.decode, line or "")
+  return ok and type(obj) == "table" and obj or nil
+end
+
+local function codex_meta(path)
+  local obj = first_line_json(path)
+  if obj and obj.type == "session_meta" and type(obj.payload) == "table" then return obj.payload end
+end
+
+-- Turns search output ("path:line" per match) into an agent's records.
+local function parse_records(agent, output, meta)
+  local read = AGENTS[agent].record
+  local memo = {}
+  local function cached(path)
+    if memo[path] == nil then memo[path] = (meta or codex_meta)(path) or false end
+    return memo[path] or nil
+  end
   local records = {}
-  for line in tostring(output):gmatch("[^\n]+") do
-    local path, json = line:match("^(.-%.jsonl):(.*)$")
-    if path then
+  for line in each_line(tostring(output)) do
+    local cut = line:find(".jsonl:", 1, true)
+    if cut then
+      local path, json = line:sub(1, cut + 5), line:sub(cut + 7)
       local ok, obj = pcall(rex.json.decode, json)
-      local att = ok and type(obj) == "table" and obj.attachment
-      if type(att) == "table" and obj.type == "attachment"
-          and att.hookEvent == "SessionStart"
-          and type(att.content) == "string"
-          and att.content:sub(1, #CONTENT_PREFIX) == CONTENT_PREFIX then
-        local block = att.content:match("REX_BLOCK=(block:[%x%-]+)")
-        local id = path:match("([^/]+)%.jsonl$")
-        if block and id and id:match("^[%w%-]+$") then
-          records[#records + 1] = {
-            path = path, id = id, block = block,
-            cwd = type(obj.cwd) == "string" and obj.cwd or nil,
-            ts = type(obj.timestamp) == "string" and obj.timestamp or "",
-          }
-        end
+      local r = ok and type(obj) == "table" and read(path, obj, cached) or nil
+      if r and r.block and type(r.id) == "string" and r.id:match("^[%w%-]+$") then
+        r.agent, r.path, r.ts = agent, path, r.ts or ""
+        records[#records + 1] = r
       end
     end
   end
@@ -89,8 +213,9 @@ end
 local function plan(records, live, activity)
   local latest = {}
   for _, r in ipairs(records) do
-    local cur = latest[r.id]
-    if not cur or r.ts >= cur.ts then latest[r.id] = r end
+    local key = r.agent .. ":" .. r.id
+    local cur = latest[key]
+    if not cur or r.ts >= cur.ts then latest[key] = r end
   end
   local by_block = {}
   for _, r in pairs(latest) do
@@ -104,7 +229,9 @@ local function plan(records, live, activity)
 end
 
 local function command_line(conv, command)
-  local cmd = command .. " --resume " .. conv.id
+  local words = { command }
+  for _, a in ipairs(AGENTS[conv.agent].resume(conv)) do words[#words + 1] = shword(a) end
+  local cmd = table.concat(words, " ")
   if conv.cwd and conv.cwd ~= "" then
     cmd = "cd " .. shquote(conv.cwd) .. " && " .. cmd
   end
@@ -119,26 +246,15 @@ end
 
 -- Environment ----------------------------------------------------------------
 
-local function home() return os.getenv("HOME") or "" end
-
 local function exists(path)
   local f = io.open(path, "r")
   if f then f:close() return true end
   return false
 end
 
-local function projects_dir()
-  if config.projects_dir then return config.projects_dir end
-  local base = os.getenv("CLAUDE_CONFIG_DIR")
-  if not base or base == "" then base = home() .. "/.claude" end
-  return base .. "/projects"
-end
-
 local function state_dir()
   if config.state_dir then return config.state_dir end
-  local base = os.getenv("XDG_STATE_HOME")
-  if not base or base == "" then base = home() .. "/.local/state" end
-  return base .. "/rextore-agent"
+  return env_dir("XDG_STATE_HOME", "/.local/state") .. "/rextore-agent"
 end
 
 local function read_file(path)
@@ -157,9 +273,9 @@ local function write_file(path, data)
   f:close()
 end
 
--- ISO time of a transcript's last entry, read from the end of the file.
+-- ISO time of a log's last entry, read from the end of the file.
 local function last_activity(path, fallback)
-  local f = io.open(path, "rb")
+  local f = path and io.open(path, "rb")
   if not f then return fallback end
   local size = f:seek("end")
   local span, best = 65536, nil
@@ -185,9 +301,9 @@ local function find_rg()
   end
 end
 
--- Finds every Rex hook record under dir. Without ripgrep, only transcripts
+-- Finds the lines holding `marker` under dir. Without ripgrep, only logs
 -- modified after `since` are read, since the system grep is slow on gigabytes.
-local function search(dir, since)
+local function search(dir, marker, since)
   if not exists(dir) then return "" end
   local rg = find_rg()
   local r, err
@@ -195,7 +311,7 @@ local function search(dir, since)
     r, err = rex.exec({
       rg, "--fixed-strings", "--no-ignore", "--hidden", "--with-filename",
       "--no-heading", "--no-line-number", "--no-messages",
-      "--glob", "*.jsonl", "--glob", "!**/subagents/**", MARKER, dir,
+      "--glob", "*.jsonl", "--glob", "!**/subagents/**", marker, dir,
     }, { timeout = 60 })
   else
     local argv = { "find", dir, "-name", "*.jsonl", "!", "-path", "*/subagents/*" }
@@ -203,14 +319,31 @@ local function search(dir, since)
       argv[#argv + 1] = "-newermt"
       argv[#argv + 1] = os.date("%Y-%m-%d %H:%M:%S", math.floor(since))
     end
-    for _, a in ipairs({ "-exec", "grep", "-HF", MARKER, "{}", "+" }) do
+    for _, a in ipairs({ "-exec", "grep", "-HF", marker, "{}", "+" }) do
       argv[#argv + 1] = a
     end
     r, err = rex.exec(argv, { env = { PATH = "/usr/bin:/bin", LC_ALL = "C" }, timeout = 180 })
   end
   if not r then return nil, err end
-  if r.timed_out then return nil, "the transcript search timed out" end
+  if r.timed_out then return nil, "the search timed out" end
   return r.stdout or ""
+end
+
+-- Every enabled agent's records. One that can't be searched is left out.
+local function all_records(since)
+  local records = {}
+  for _, agent in ipairs(AGENT_ORDER) do
+    if config.agents[agent] ~= false then
+      local def = AGENTS[agent]
+      local out, err = search(config.dirs[agent] or def.dir(), def.marker, since)
+      if out then
+        for _, r in ipairs(parse_records(agent, out)) do records[#records + 1] = r end
+      else
+        rex.log("warn", "rextore: " .. agent .. ": " .. tostring(err))
+      end
+    end
+  end
+  return records
 end
 
 -- Rex ------------------------------------------------------------------------
@@ -260,7 +393,7 @@ local function pane_state(p)
   return "ready"
 end
 
--- The transcripts are searched once per server instance; later runs reuse it.
+-- The logs are searched once per server instance; later runs reuse it.
 local cache = {}
 
 local function candidates(panes, instance)
@@ -271,9 +404,8 @@ local function candidates(panes, instance)
       local t = uuid7_seconds(p.block_id)
       if t and (not oldest or t < oldest) then oldest = t end
     end
-    local out, err = search(projects_dir(), oldest and (oldest - 86400))
-    if not out then error("rextore: " .. tostring(err), 0) end
-    cache = { instance = instance, by_block = plan(parse_records(out), live, last_activity) }
+    local records = all_records(oldest and (oldest - 86400))
+    cache = { instance = instance, by_block = plan(records, live, last_activity) }
   end
   local items = {}
   for _, p in ipairs(panes) do
@@ -282,7 +414,7 @@ local function candidates(panes, instance)
       local state, detail = pane_state(p)
       items[#items + 1] = {
         pane = p, conv = conv, state = state, detail = detail,
-        command = command_line(conv, config.command),
+        command = command_line(conv, command_of(conv.agent)),
       }
     end
   end
@@ -292,15 +424,16 @@ end
 local function report(item)
   return {
     session = item.pane.session, block_id = item.pane.block_id,
-    conversation = item.conv.id, cwd = item.conv.cwd, last_active = item.conv.active,
-    state = item.state, detail = item.detail, command = item.command,
+    agent = item.conv.agent, conversation = item.conv.id, cwd = item.conv.cwd,
+    last_active = item.conv.active, state = item.state, detail = item.detail,
+    command = item.command,
   }
 end
 
 local function type_into(item, enter)
   local r, err = rex.block.call(TERMINAL, "write", {
     session_id = item.pane.session_id, block_id = item.pane.block_id,
-    data = keystrokes(item.conv, config.command, enter),
+    data = keystrokes(item.conv, command_of(item.conv.agent), enter),
   })
   return r ~= nil, err
 end
@@ -440,14 +573,14 @@ end
 -- Setup ----------------------------------------------------------------------
 
 function M.setup(opts)
-  for k, v in pairs(opts or {}) do config[k] = v end
+  configure(opts)
 
   rex.action{
     name = "rextore",
-    title = "Resume Claude Conversations",
-    description = "Type the resume command for the Claude Code conversation each "
-      .. "pane of this session ran, into the panes waiting at a prompt.",
-    keywords = "rextore claude resume restore agent conversation",
+    title = "Resume Agent Conversations",
+    description = "Resume the agent conversation each pane of this session ran, "
+      .. "in the panes waiting at a prompt.",
+    keywords = "rextore claude codex resume restore agent conversation",
     args = { dry_run = "boolean?", press_enter = "boolean?" },
     run = run,
   }
@@ -460,9 +593,9 @@ end
 
 -- `rex do rextore-agent.lua all=true`, and the startup helper's run.
 function M.script(args)
-  for k, v in pairs(args.options or {}) do config[k] = v end
+  configure(args.options)
   for _, k in ipairs(OPTION_NAMES) do
-    if args[k] ~= nil then config[k] = args[k] end
+    if args[k] ~= nil and type(args[k]) ~= "table" then config[k] = args[k] end
   end
   if args.startup then return startup(config.press_enter) end
   return (pass(nil, config.press_enter, args.dry_run))
@@ -470,13 +603,14 @@ end
 
 -- For tests.
 M._internal = {
+  AGENTS = AGENTS,
   shquote = shquote,
+  shword = shword,
   uuid7_seconds = uuid7_seconds,
   parse_records = parse_records,
   plan = plan,
   command_line = command_line,
   keystrokes = keystrokes,
-  MARKER = MARKER,
 }
 
 if rex.args ~= nil and (rex.args.all or rex.args.startup) then
