@@ -168,8 +168,14 @@ local AGENTS = {
     panes = true, -- from agents/opencode/tui.ts
     resume = function(c) return { "--session", c.id } end,
   },
+  pi = {
+    command = "pi",
+    panes = true, -- from agents/pi/rextore-agent.ts
+    -- Pi reopens a session from its file.
+    resume = function(c) return { "--session", c.file or c.id } end,
+  },
 }
-local AGENT_ORDER = { "claude", "codex", "opencode" }
+local AGENT_ORDER = { "claude", "codex", "opencode", "pi" }
 
 -- Where rextore's agent plugins record panes. They read no options, so this
 -- is always the default state folder.
@@ -228,8 +234,9 @@ local function parse_panes(agent, text)
   local records = {}
   for line in each_line(tostring(text)) do
     local ok, obj = pcall(rex.json.decode, line)
+    -- Pi's IDs can hold a "/"; every word typed is shell-quoted anyway.
     if ok and type(obj) == "table" and obj.agent == agent
-        and type(obj.id) == "string" and obj.id:match("^[%w_%-]+$")
+        and type(obj.id) == "string" and obj.id ~= "" and not obj.id:find("%c")
         and type(obj.block) == "string" and obj.block:match("^block:[%x%-]+$") then
       records[#records + 1] = {
         agent = agent, id = obj.id, block = obj.block, cwd = str(obj.cwd),
@@ -618,7 +625,7 @@ function M.setup(opts)
     title = "Resume Agent Conversations",
     description = "Resume the agent conversation each pane of this session ran, "
       .. "in the panes waiting at a prompt.",
-    keywords = "rextore claude codex opencode resume restore agent conversation",
+    keywords = "rextore claude codex opencode pi resume restore agent conversation",
     args = { dry_run = "boolean?", press_enter = "boolean?" },
     run = run,
   }

@@ -116,7 +116,7 @@ do
     pane_line({ agent = "opencode", event = "quit", block = B1, id = "ses_abc", cwd = "/w", timestamp = "2026-11-20T11:00:00.000Z" }),
     pane_line({ agent = "pi", event = "shown", block = B2, id = "p1", timestamp = "2026-11-20T10:00:00.000Z" }),
     pane_line({ agent = "opencode", event = "shown", block = "not a block", id = "ses_x" }),
-    pane_line({ agent = "opencode", event = "shown", block = B2, id = "bad id; rm -rf ~" }),
+    pane_line({ agent = "opencode", event = "shown", block = B2, id = "bad\nid" }),
     "{not json",
   }, "\n")
   local recs = I.parse_panes("opencode", text)
@@ -133,6 +133,13 @@ do
   by = I.plan(recs, { [B1] = true }, function() return nil end)
   eq("plan reopens a session shown after its quit", by[B1] and by[B1].id, "ses_abc")
   eq("opencode command", I.command_line(by[B1], "opencode"), " cd '/w' && opencode --session ses_abc")
+
+  -- Pi resumes from the session file, quoted where it needs it
+  local pi = I.parse_panes("pi", s({ agent = "pi", event = "shown", block = B1, id = "a/b",
+    file = "/Users/me/.pi/agent/sessions/my project/a.jsonl", cwd = "/w", timestamp = "2026-11-20T10:00:00.000Z" }))
+  eq("pi id with a slash", pi[1] and pi[1].id, "a/b")
+  eq("pi command", pi[1] and I.command_line(pi[1], "pi"),
+    " cd '/w' && pi --session '/Users/me/.pi/agent/sessions/my project/a.jsonl'")
 end
 
 -- plan

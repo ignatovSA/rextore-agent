@@ -44,8 +44,8 @@ printf '%s\n' \
 cat > "$tmp/dev.lua" <<EOF
 dofile("$here/rextore-agent.lua").setup{
   on_start = false,
-  dirs = { claude = "$tmp/projects", codex = "$tmp/codex", opencode = "$tmp/panes" },
-  commands = { claude = "echo resumed", codex = "echo codex-resumed", opencode = "echo oc-resumed" },
+  dirs = { claude = "$tmp/projects", codex = "$tmp/codex", opencode = "$tmp/panes", pi = "$tmp/panes" },
+  commands = { claude = "echo resumed", codex = "echo codex-resumed", opencode = "echo oc-resumed", pi = "echo pi-resumed" },
   state_dir = "$tmp/state",
   rg = ${E2E_RG:-nil},
 }
@@ -132,5 +132,17 @@ plan=$(act dry_run=true)
 printf '%s' "$plan" | jq -e --arg b "$block" '.ready | map(select(.block_id == $b)) | .[0].agent == "codex"' \
   >/dev/null || fail "after an OpenCode quit: $plan"
 echo "ok: an OpenCode session from the plugin's record wins, and a quit one doesn't come back"
+
+# 8. Pi: resumed from its session file, quoted, since this one has a space.
+pifile="$tmp/pi sessions/a.jsonl"
+printf '{"agent":"pi","event":"shown","block":"%s","id":"pi/e2e","file":"%s","cwd":"%s","timestamp":"2026-01-01T00:40:00.000Z"}\n' \
+  "$block" "$pifile" "$tmp" >> "$tmp/panes/panes.jsonl"
+plan=$(act dry_run=true)
+printf '%s' "$plan" | jq -e --arg b "$block" '.ready | map(select(.block_id == $b)) | .[0].agent == "pi" and .[0].conversation == "pi/e2e"' \
+  >/dev/null || fail "pi dry run: $plan"
+act >/dev/null
+sleep 1
+screen | grep -F -x "pi-resumed --session $pifile" >/dev/null || fail "pi resume did not run: $(screen | tail -3)"
+echo "ok: a Pi session from the extension's record runs as pi --session <file>"
 
 echo "all end-to-end checks passed"

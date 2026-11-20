@@ -22,10 +22,12 @@ small plugin for each agent Rex has no hook for.
 | Claude Code | Rex's hook output in the transcripts under `~/.claude/projects` | `claude --resume <id>` |
 | Codex | Rex's hook output in the session logs under `~/.codex/sessions` | `codex resume <id>` |
 | OpenCode | rextore's OpenCode plugin, in `~/.local/state/rextore-agent/panes.jsonl` | `opencode --session <id>` |
+| Pi | rextore's Pi extension, in the same `panes.jsonl` | `pi --session <file>` |
 
-Claude Code and Codex need Rex's agent hook, which `rex skill setup` installs.
-Run `rex skill status` to check it. Rex has no hook for OpenCode, so
-`install.sh` adds rextore's own plugin to it instead. See [OpenCode](#opencode).
+These are the four agents `rex skill setup` knows. Claude Code and Codex need
+Rex's agent hook, which `rex skill setup` installs; run `rex skill status` to
+check it. Rex has no hook for OpenCode and Pi, so `install.sh` adds rextore's
+own plugin to each instead. See [OpenCode and Pi](#opencode-and-pi).
 
 ## How it works
 
@@ -66,23 +68,29 @@ by session:
 - **`codex exec` runs and subagents** carry the pane of whatever started them.
   rextore skips these too.
 
-### OpenCode
+### OpenCode and Pi
 
-OpenCode has no command hooks, so Rex can't tell it which pane it runs in.
-rextore's plugin, [`agents/opencode/tui.ts`](agents/opencode/tui.ts), runs in
-the OpenCode TUI. When the TUI in a Rex pane shows a session, it appends a
+Rex's hook can't run in OpenCode or Pi, so Rex can't tell them which pane they
+run in. rextore's own plugins do it from inside the agent:
+[`agents/opencode/tui.ts`](agents/opencode/tui.ts), an OpenCode TUI plugin, and
+[`agents/pi/rextore-agent.ts`](agents/pi/rextore-agent.ts), a Pi extension.
+When an agent in a Rex pane shows or starts a session, the plugin appends a
 line to `$XDG_STATE_HOME/rextore-agent/panes.jsonl`
 (`~/.local/state/rextore-agent/panes.jsonl` by default):
 
 ```json
 {"agent":"opencode","event":"shown","block":"block:…","id":"ses_…","cwd":"…","timestamp":"…"}
+{"agent":"pi","event":"shown","block":"block:…","id":"…","file":"…/session.jsonl","cwd":"…","timestamp":"…"}
 ```
 
-A subagent's session counts as its parent's. When you quit OpenCode, the
-plugin adds an `"event":"quit"` line, so rextore doesn't reopen a session you
-closed. A signal, as at a shutdown or a Rex server stop, isn't a quit. The
-plugin uses only Node's standard library, and it checks the shown session once
-a second.
+When you quit the agent, the plugin adds an `"event":"quit"` line, so rextore
+doesn't reopen a session you closed. A signal, as at a shutdown or a Rex
+server stop, isn't a quit. Both plugins use only Node's standard library.
+
+- **OpenCode:** the session the TUI shows, checked once a second. A
+  subagent's session counts as its parent's.
+- **Pi:** each session an interactive Pi starts or switches to. `pi -p` and
+  other non-interactive runs aren't recorded.
 
 ## Install
 
@@ -100,9 +108,14 @@ sh install.sh
 require("rextore-agent").setup{}
 ```
 
-If OpenCode's config folder exists (`$OPENCODE_CONFIG_DIR`, or
-`~/.config/opencode`), it also links the OpenCode plugin there as
-`plugins/rextore-agent/tui.ts`. Restart OpenCode to load it.
+It also links rextore's agent plugins, for the agents it finds:
+
+- **OpenCode**, if its config folder exists (`$OPENCODE_CONFIG_DIR`, or
+  `~/.config/opencode`): as `plugins/rextore-agent/tui.ts` there.
+- **Pi**, if its agent folder exists (`$PI_CODING_AGENT_DIR`, or
+  `~/.pi/agent`): as `extensions/rextore-agent.ts` there.
+
+Restart a running OpenCode or Pi to load its plugin.
 
 Run `sh install.sh --uninstall` to undo all of it.
 
@@ -150,7 +163,7 @@ require("rextore-agent").setup{
 | `on_start` | `true` | Run the resume commands once after the server starts. |
 | `press_enter` | `true` | Press Enter after typing. `false` leaves each command at its prompt. |
 | `agents` | all on | `false` for an agent leaves it out, such as `{ codex = false }`. |
-| `commands` | `claude`, `codex`, `opencode` | What starts each agent. Your shell's alias or function for it applies. |
+| `commands` | `claude`, `codex`, `opencode`, `pi` | What starts each agent. Your shell's alias or function for it applies. |
 | `dirs` | see below | Where each agent's logs are, such as `{ claude = "/elsewhere/projects" }`. |
 | `wait` | `60` | Seconds the startup run waits for restored shells to reach a prompt. |
 | `state_dir` | `$XDG_STATE_HOME/rextore-agent` or `~/.local/state/rextore-agent` | Where it records the last startup run (`last-run.json`). |
@@ -161,7 +174,7 @@ require("rextore-agent").setup{
 
 The default `dirs` are `$CLAUDE_CONFIG_DIR/projects` or `~/.claude/projects`
 for Claude Code, `$CODEX_HOME/sessions` or `~/.codex/sessions` for Codex, and
-the folder holding `panes.jsonl` for OpenCode.
+the folder holding `panes.jsonl` for OpenCode and Pi.
 
 ## How the startup run works
 
@@ -181,13 +194,13 @@ Once Rex runs `rex.on` handlers from `init.lua`, the helper can go away.
   from before the hook that you resumed but haven't used since.
 - **Codex sessions run through Codex's app-server daemon aren't covered**,
   because their logs name the daemon's pane. See [Codex](#codex).
-- **OpenCode sessions from before the plugin was installed aren't covered**,
-  and the plugin has been tested only against a mocked OpenCode plugin
-  context, not a real OpenCode.
+- **OpenCode and Pi sessions from before their plugin was installed aren't
+  covered.** The plugins have been tested only against mocked plugin APIs, not
+  a real OpenCode or Pi.
 - **For Claude Code and Codex, it can't tell whether you'd quit the agent** in
   a pane before the restart. The pane's most recent conversation comes back
-  either way. Set `press_enter = false` if you'd rather choose. OpenCode's
-  plugin records a quit, so OpenCode is spared this.
+  either way. Set `press_enter = false` if you'd rather choose. The OpenCode
+  and Pi plugins record a quit, so those two are spared this.
 - **A reply cut off by the restart doesn't continue by itself.** Ask it to
   continue.
 - **Typing races with you.** If you type into a restored pane at the same
@@ -205,6 +218,7 @@ From a Rex pane, in the repository:
 ```sh
 rex do tests/run.lua    # unit tests, in Rex's own Lua
 node tests/opencode.mjs # the OpenCode plugin, against a mocked context
+node tests/pi.mjs       # the Pi extension, against a mocked API
 sh tests/e2e.sh         # opens a scratch tab, uses echo in place of the agents
 sh tests/restart.sh     # a throwaway Rex server: start, stop, restore, check
 ```

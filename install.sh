@@ -10,6 +10,7 @@ init=${REX_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/rex/init.lua}
 dir=$(dirname "$init")
 line='require("rextore-agent").setup{}'
 opencode=${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}
+pi=${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}
 
 if [ "${1:-}" = "--uninstall" ]; then
   rm -f "$dir/rextore-agent.lua"
@@ -23,6 +24,10 @@ if [ "${1:-}" = "--uninstall" ]; then
     rm -f "$opencode/plugins/rextore-agent/tui.ts"
     rmdir "$opencode/plugins/rextore-agent" 2>/dev/null || true
     echo "removed the OpenCode plugin"
+  fi
+  if [ -L "$pi/extensions/rextore-agent.ts" ]; then
+    rm -f "$pi/extensions/rextore-agent.ts"
+    echo "removed the Pi extension"
   fi
   rex config reload
   echo "uninstalled from $dir"
@@ -39,6 +44,13 @@ if [ -d "$opencode" ]; then
   mkdir -p "$opencode/plugins/rextore-agent"
   ln -sfn "$here/agents/opencode/tui.ts" "$opencode/plugins/rextore-agent/tui.ts"
   echo "OpenCode plugin: $opencode/plugins/rextore-agent/tui.ts"
+fi
+
+# Pi loads extensions/*.ts from its agent folder by itself.
+if [ -d "$pi" ]; then
+  mkdir -p "$pi/extensions"
+  ln -sfn "$here/agents/pi/rextore-agent.ts" "$pi/extensions/rextore-agent.ts"
+  echo "Pi extension: $pi/extensions/rextore-agent.ts"
 fi
 
 rex config check "$init"
