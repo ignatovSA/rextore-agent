@@ -17,57 +17,28 @@ small plugin for each agent Rex has no hook for.
 
 ## Install
 
-With one command, without cloning the repository:
-
 ```sh
 curl -fsSL https://raw.githubusercontent.com/ignatovSA/rextore-agent/main/install.sh | sh
 ```
 
-`install.sh` downloads `rextore-agent.lua` and the OpenCode and Pi plugins to
-`~/.local/share/rextore-agent` (`$XDG_DATA_HOME/rextore-agent`), then installs
-from there as below. Run the same command again to update. To pin a version,
-point `REXTORE_URL` at a tag or a commit:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/ignatovSA/rextore-agent/main/install.sh |
-  REXTORE_URL=https://raw.githubusercontent.com/ignatovSA/rextore-agent/<tag-or-commit> sh
-```
-
-Or from a clone, which `install.sh` links to instead, so a `git pull` updates
-it:
-
-```sh
-git clone https://github.com/ignatovSA/rextore-agent
-cd rextore-agent
-sh install.sh
-```
-
-Either way, `install.sh` links `rextore-agent.lua` into Rex's config folder
-(`~/.config/rex`, or the folder of `$REX_CONFIG`). It adds this line to
-`init.lua`, then reloads the config:
+`install.sh` downloads `rextore-agent.lua` and its agent plugins to
+`~/.local/share/rextore-agent` (`$XDG_DATA_HOME/rextore-agent`), and links
+`rextore-agent.lua` into Rex's config folder (`~/.config/rex`, or the folder of
+`$REX_CONFIG`). It adds this line to `init.lua`, then reloads the config:
 
 ```lua
 require("rextore-agent").setup{}
 ```
 
-It also links rextore's agent plugins, for the agents it finds:
-
-- **OpenCode**, if its config folder exists (`$OPENCODE_CONFIG_DIR`, or
-  `~/.config/opencode`): as `plugins/rextore-agent/tui.ts` there.
-- **Pi**, if its agent folder exists (`$PI_CODING_AGENT_DIR`, or
-  `~/.pi/agent`): as `extensions/rextore-agent.ts` there.
-
-Restart a running OpenCode or Pi to load its plugin.
-
-To undo all of it, run `sh install.sh --uninstall` in the clone, or:
+Run the same command again to update. To undo all of it, downloaded files
+included:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/ignatovSA/rextore-agent/main/install.sh | sh -s -- --uninstall
 ```
 
-That also removes the downloaded files.
-
-### By hand
+<details>
+<summary>By hand</summary>
 
 Without running any script, put the files in place yourself:
 
@@ -110,19 +81,7 @@ Steps 4 and 5 are only for the agents you use. To update, save the files
 again. To uninstall, delete them and the `require` line, then run
 `rex config reload`.
 
-## Agents
-
-| Agent | Where rextore finds the pane | Resume command |
-| --- | --- | --- |
-| Claude Code | Rex's hook output in the transcripts under `~/.claude/projects` | `claude --resume <id>` |
-| Codex | Rex's hook output in the session logs under `~/.codex/sessions` | `codex resume <id>` |
-| OpenCode | rextore's OpenCode plugin, in `~/.local/state/rextore-agent/panes.jsonl` | `opencode --session <id>` |
-| Pi | rextore's Pi extension, in the same `panes.jsonl` | `pi --session <file>` |
-
-These are the four agents `rex skill setup` knows. Claude Code and Codex need
-Rex's agent hook, which `rex skill setup` installs; run `rex skill status` to
-check it. Rex has no hook for OpenCode and Pi, so `install.sh` adds rextore's
-own plugin to each instead. See [OpenCode and Pi](#opencode-and-pi).
+</details>
 
 ## How it works
 
@@ -147,6 +106,20 @@ The search uses [ripgrep](https://github.com/BurntSushi/ripgrep) when it's
 installed: under a second for gigabytes of logs. Without it, the plugin falls
 back to `find` and `grep`. It then reads only logs changed since the oldest
 open pane was created, which can still take several seconds.
+
+## Agents
+
+| Agent | Where rextore finds the pane | Resume command |
+| --- | --- | --- |
+| Claude Code | Rex's hook output in the transcripts under `~/.claude/projects` | `claude --resume <id>` |
+| Codex | Rex's hook output in the session logs under `~/.codex/sessions` | `codex resume <id>` |
+| OpenCode | rextore's OpenCode plugin, in `~/.local/state/rextore-agent/panes.jsonl` | `opencode --session <id>` |
+| Pi | rextore's Pi extension, in the same `panes.jsonl` | `pi --session <file>` |
+
+These are the four agents `rex skill setup` knows. Claude Code and Codex need
+Rex's agent hook, which `rex skill setup` installs; run `rex skill status` to
+check it. Rex has no hook for OpenCode and Pi, so `install.sh` adds rextore's
+own plugin to each instead. See [OpenCode and Pi](#opencode-and-pi).
 
 ### Codex
 
@@ -186,6 +159,12 @@ server stop, isn't a quit. Both plugins use only Node's standard library.
   subagent's session counts as its parent's.
 - **Pi:** each session an interactive Pi starts or switches to. `pi -p` and
   other non-interactive runs aren't recorded.
+
+`install.sh` links each plugin for the agents it finds: OpenCode's as
+`plugins/rextore-agent/tui.ts` in its config folder (`$OPENCODE_CONFIG_DIR`, or
+`~/.config/opencode`), and Pi's as `extensions/rextore-agent.ts` in its agent
+folder (`$PI_CODING_AGENT_DIR`, or `~/.pi/agent`). Restart a running OpenCode
+or Pi to load its plugin.
 
 ## Compared with rexume and rexurrect
 
