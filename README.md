@@ -172,6 +172,49 @@ curl -fsSL https://raw.githubusercontent.com/ignatovSA/rextore-agent/main/instal
 
 That also removes the downloaded files.
 
+### By hand
+
+Without running any script, put the files in place yourself:
+
+1. Save [`rextore-agent.lua`](rextore-agent.lua) in Rex's config folder,
+   `~/.config/rex` (or `$XDG_CONFIG_HOME/rex`):
+
+   ```sh
+   mkdir -p ~/.config/rex
+   curl -fsSL https://raw.githubusercontent.com/ignatovSA/rextore-agent/main/rextore-agent.lua \
+     -o ~/.config/rex/rextore-agent.lua
+   ```
+
+2. Add this line to `~/.config/rex/init.lua`, creating the file if needed:
+
+   ```lua
+   require("rextore-agent").setup{}
+   ```
+
+3. Load it with `rex config reload`, or by restarting Rex.
+
+4. For OpenCode, save [`agents/opencode/tui.ts`](agents/opencode/tui.ts) as
+   `plugins/rextore-agent/tui.ts` in OpenCode's config folder:
+
+   ```sh
+   mkdir -p ~/.config/opencode/plugins/rextore-agent
+   curl -fsSL https://raw.githubusercontent.com/ignatovSA/rextore-agent/main/agents/opencode/tui.ts \
+     -o ~/.config/opencode/plugins/rextore-agent/tui.ts
+   ```
+
+5. For Pi, save [`agents/pi/rextore-agent.ts`](agents/pi/rextore-agent.ts) in
+   Pi's `extensions` folder:
+
+   ```sh
+   mkdir -p ~/.pi/agent/extensions
+   curl -fsSL https://raw.githubusercontent.com/ignatovSA/rextore-agent/main/agents/pi/rextore-agent.ts \
+     -o ~/.pi/agent/extensions/rextore-agent.ts
+   ```
+
+Steps 4 and 5 are only for the agents you use. To update, save the files
+again. To uninstall, delete them and the `require` line, then run
+`rex config reload`.
+
 ## Use
 
 **After a restart** nothing is needed. When the Rex server starts, the plugin
