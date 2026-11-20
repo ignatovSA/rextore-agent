@@ -122,13 +122,32 @@ footprint: no daemon and no binary, with Rex's own restore doing the rest.
 
 ## Install
 
+With one command, without cloning the repository:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ignatovSA/rextore-agent/main/install.sh | sh
+```
+
+`install.sh` downloads `rextore-agent.lua` and the two agent plugins to
+`~/.local/share/rextore-agent` (`$XDG_DATA_HOME/rextore-agent`), then installs
+from there as below. Run the same command again to update. To pin a version,
+point `REXTORE_URL` at a tag or a commit:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ignatovSA/rextore-agent/main/install.sh |
+  REXTORE_URL=https://raw.githubusercontent.com/ignatovSA/rextore-agent/<tag-or-commit> sh
+```
+
+Or from a clone, which `install.sh` links to instead, so a `git pull` updates
+it:
+
 ```sh
 git clone https://github.com/ignatovSA/rextore-agent
 cd rextore-agent
 sh install.sh
 ```
 
-`install.sh` links `rextore-agent.lua` into Rex's config folder
+Either way, `install.sh` links `rextore-agent.lua` into Rex's config folder
 (`~/.config/rex`, or the folder of `$REX_CONFIG`). It adds this line to
 `init.lua`, then reloads the config:
 
@@ -145,7 +164,13 @@ It also links rextore's agent plugins, for the agents it finds:
 
 Restart a running OpenCode or Pi to load its plugin.
 
-Run `sh install.sh --uninstall` to undo all of it.
+To undo all of it, run `sh install.sh --uninstall` in the clone, or:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ignatovSA/rextore-agent/main/install.sh | sh -s -- --uninstall
+```
+
+That also removes the downloaded files.
 
 ## Use
 
